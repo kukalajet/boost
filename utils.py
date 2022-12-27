@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict, Any
 import numpy as np
 from pandas import pd, DataFrame
 from sklearn.model_selection import KFold, StratifiedKFold
@@ -52,3 +52,11 @@ def create_folds(
         raise Exception("Problem type not supported")
 
     return train_df
+
+
+def dict_mean(dict_list) -> Dict[str, Any]:
+    mean_dict = {}
+    for key in dict_list[0].keys():
+        mean_dict[key] = sum(d[key] for d in dict_list) / len(dict_list)
+
+    return mean_dict
