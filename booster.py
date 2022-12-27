@@ -1,11 +1,15 @@
+import os
 import dataclasses
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pandas import pd
+from numpy import np
+import joblib
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
-import logger
+from logger import logger
 from problem import determine_problem_type
 from utils import inject_idx, create_folds
 from problem import ProblemType
+from model import ModelConfig, train_model, predict_model
 
 
 @dataclasses
@@ -43,7 +47,7 @@ class Booster:
         if self.test_filename is not None:
             test_df = pd.read_csv(self.test_filename)
             # TODO: use `reduce_memory_usage` here
-            test_df = inject_idx(train_df)
+            test_df = inject_idx(test_df)
 
         train_df = create_folds(train_df, problem)
         ignore_columns = [self.idx, "kfold"] + self.targets
@@ -74,8 +78,62 @@ class Booster:
         if len(self.categorical_features) > 0:
             logger.info("Encoding categorical features")
 
-    def train(self):
-        return
+        categorical_encoders = {}
+        for fold in range(self.num_folds):
+            fold_train = train_df[train_df.kfold != fold].reset_index(drop=True)
+            fold_valid = train_df[train_df.kfold == fold].reset_index(drop=True)
 
-    def predict(self):
-        return
+            if self.test_filename is not None:
+                test_fold = test_df.copy(deep=True)
+
+            if len(categorical_features) > 0:
+                ordinal_encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=np.nan)
+                fold_train[categorical_features] = ordinal_encoder.fit_transform(
+                    fold_train[categorical_features].values)
+                fold_valid[categorical_features] = ordinal_encoder.transform(
+                    fold_valid[categorical_features].values)
+                if self.test_filename is not None:
+                    test_fold[categorical_features] = ordinal_encoder.transform(
+                        test_fold[categorical_features].values)
+                categorical_encoders[fold] = ordinal_encoder
+
+            # WHAT'S A FCKING FEATHER? look at `to_feather`
+            fold_train.to_feather(os.path.join(self.output, f"train_fold_{fold}.feather"))
+            fold_valid.to_feather(os.path.join(self.output, f"valid_fold_{fold}.feather"))
+            if self.test_filename is not None:
+                test_fold.to_feather(os.path.join(self.output, f"test_fold_{fold}.feather"))
+
+        self.model_config = ModelConfig(
+            idx=self.idx,
+            features=self.features,
+            categorical_features=self.categorical_features,
+            train_filename=self.train_filename,
+            test_filename=self.test_filename,
+            output=self.output,
+            problem=problem,
+            targets=self.targets,
+            use_gpu=self.use_gpu,
+            num_folds=self.num_folds,
+            seed=self.seed,
+            num_trials=self.num_trials,
+            time_limit=self.time_limit,
+            fast=self.fast,
+        )
+
+        logger.info(f"Model config: {self.model_config}")
+        logger.info("Saving model config")
+
+        # save encoders
+        logger.info("Saving encoders")
+        joblib.dump(categorical_encoders, f"{self.output}/axgb.categorical_encoders")
+        joblib.dump(target_encoder, f"{self.output}/axgb.target_encoder")
+
+    def train(self):
+        self._process_data()
+        params = train_model(self.model_config)
+        logger.info("Training complete")
+        self.predict(params)
+
+    def predict(self, params: Dict[str, Any]):
+        logger.info("Creating OOF and test predictions")
+        predict_model(self.model_config, params)

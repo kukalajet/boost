@@ -5,10 +5,13 @@ from functools import partial
 from optuna import Trial, create_study
 from numpy import np
 from pandas import pd
+import joblib
+import copy
 from xgboost import XGBClassifier, XGBRegressor
 from problem import ProblemType
 from utils import dict_mean
 from metrics import Metrics
+from logger import logger
 
 
 class ModelConfig(BaseModel):
@@ -91,6 +94,36 @@ def _fetch_model_params(model_config: ModelConfig):
             raise NotImplementedError
 
     return model, predict_probabilities, eval_metric, direction
+
+
+def _save_valid_predictions(final_valid_predictions, model_config, target_encoder, output_file_name):
+    final_valid_predictions = pd.DataFrame.from_dict(
+        final_valid_predictions, orient="index").reset_index()
+    if target_encoder is None:
+        final_valid_predictions.columns = [model_config.idx] + model_config.targets
+    else:
+        final_valid_predictions.columns = [model_config.idx] + list(target_encoder.classes_)
+
+    final_valid_predictions.to_csv(
+        os.path.join(model_config.output, output_file_name),
+        index=False,
+    )
+
+
+def _save_test_predictions(final_test_predictions, model_config, target_encoder, test_ids, output_file_name):
+    final_test_predictions = np.mean(final_test_predictions, axis=0)
+    if target_encoder is None:
+        final_test_predictions = pd.DataFrame(
+            final_test_predictions, columns=model_config.targets)
+    else:
+        final_test_predictions = pd.DataFrame(
+            final_test_predictions, columns=list(target_encoder.classes_))
+    final_test_predictions.insert(
+        loc=0, column=model_config.idx, value=test_ids)
+    final_test_predictions.to_csv(
+        os.path.join(model_config.output, output_file_name),
+        index=False,
+    )
 
 
 def optimize(
@@ -201,3 +234,134 @@ def train_model(model_config: ModelConfig) -> Dict[str, Any]:
     )
 
     return study.best_params
+
+
+def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
+    early_stopping_rounds = best_params["early_stopping_rounds"]
+    del best_params["early_stopping_rounds"]
+
+    if model_config.use_gpu is True:
+        best_params["tree_method"] = "gpu_hist"
+        best_params["gpu_id"] = 0
+        best_params["predictor"] = "gpu_predictor"
+
+    xgb_model, use_predict_proba, eval_metric, _ = _fetch_model_params(model_config)
+
+    metrics = Metrics(model_config.problem_type)
+    scores = []
+
+    final_test_predictions = []
+    final_valid_predictions = {}
+
+    target_encoder = joblib.load(f"{model_config.output}/axgb.target_encoder")
+
+    for fold in range(model_config.num_folds):
+        logger.info(f"Training and predicting for fold {fold}")
+        train_path = f"train_fold_{fold}.feather"
+        valid_path = f"valid_fold_{fold}.feather"
+
+        train_feather = pd.read_feather(os.path.join(model_config.output, train_path))
+        valid_feather = pd.read_feather(os.path.join(model_config.output, valid_path))
+
+        x_train = train_feather[model_config.features]
+        x_valid = valid_feather[model_config.features]
+
+        valid_ids = valid_feather[model_config.idx].values
+
+        if model_config.test_filename is not None:
+            test_path = f"test_fold_{fold}.feather"
+            test_feather = pd.read_feather(os.path.join(model_config.output, test_path))
+            x_test = test_feather[model_config.features]
+            test_ids = test_feather[model_config.idx].values
+
+        y_train = train_feather[model_config.targets].values
+        y_valid = valid_feather[model_config.targets].values
+
+        model = xgb_model(
+            random_state=model_config.seed,
+            eval_metric=eval_metric,
+            use_label_encoder=False,
+            **best_params,
+        )
+
+        if model_config.problem_type in (ProblemType.multi_column_regression, ProblemType.multi_label_classification):
+            ypred = []
+            test_pred = []
+            trained_models = []
+            for idx in range(len(model_config.targets)):
+                _m = copy.deepcopy(model)
+                _m.fit(
+                    x_train,
+                    y_train[:, idx],
+                    early_stopping_rounds=early_stopping_rounds,
+                    eval_set=[(x_valid, y_valid[:, idx])],
+                    verbose=False,
+                )
+                trained_models.append(_m)
+                if model_config.problem_type == ProblemType.multi_column_regression:
+                    ypred_temp = _m.predict(x_valid)
+                    if model_config.test_filename is not None:
+                        test_pred_temp = _m.predict(x_test)
+                else:
+                    ypred_temp = _m.predict_proba(x_valid)[:, 1]
+                    if model_config.test_filename is not None:
+                        test_pred_temp = _m.predict_proba(x_test)[:, 1]
+
+                ypred.append(ypred_temp)
+                if model_config.test_filename is not None:
+                    test_pred.append(test_pred_temp)
+
+            ypred = np.column_stack(ypred)
+            if model_config.test_filename is not None:
+                test_pred = np.column_stack(test_pred)
+            joblib.dump(
+                trained_models,
+                os.path.join(
+                    model_config.output,
+                    f"axgb_model.{fold}",
+                ),
+            )
+
+        else:
+            model.fit(
+                x_train,
+                y_train,
+                early_stopping_rounds=early_stopping_rounds,
+                eval_set=[(x_valid, y_valid)],
+                verbose=False,
+            )
+
+            joblib.dump(
+                model,
+                os.path.join(
+                    model_config.output,
+                    f"axgb_model.{fold}",
+                ),
+            )
+
+            if use_predict_proba:
+                ypred = model.predict_proba(x_valid)
+                if model_config.test_filename is not None:
+                    test_pred = model.predict_proba(x_test)
+            else:
+                ypred = model.predict(x_valid)
+                if model_config.test_filename is not None:
+                    test_pred = model.predict(x_test)
+
+        final_valid_predictions.update(dict(zip(valid_ids, ypred)))
+        if model_config.test_filename is not None:
+            final_test_predictions.append(test_pred)
+
+        # calculate metric
+        metric_dict = metrics.calculate(y_valid, ypred)
+        scores.append(metric_dict)
+        logger.info(f"Fold {fold} done!")
+
+    mean_metrics = dict_mean(scores)
+    logger.info(f"Metrics: {mean_metrics}")
+    _save_valid_predictions(final_valid_predictions, model_config, target_encoder, "oof_predictions.csv")
+
+    if model_config.test_filename is not None:
+        _save_test_predictions(final_test_predictions, model_config, target_encoder, test_ids, "test_predictions.csv")
+    else:
+        logger.info("No test data supplied. Only OOF predictions were generated")
