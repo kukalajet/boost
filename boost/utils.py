@@ -1,11 +1,11 @@
 from typing import List, Dict, Any
 import numpy as np
-from pandas import pd, DataFrame
+import pandas as pd
 from sklearn.model_selection import KFold, StratifiedKFold
-from problem import ProblemType
+from boost.problem import ProblemType
 
 
-def inject_idx(df: DataFrame, idx: int) -> DataFrame:
+def inject_idx(df: pd.DataFrame, idx: int) -> pd.DataFrame:
     if idx not in df.columns:
         df[idx] = np.arange(len(df))
 
@@ -13,12 +13,12 @@ def inject_idx(df: DataFrame, idx: int) -> DataFrame:
 
 
 def create_folds(
-        train_df: DataFrame,
+        train_df: pd.DataFrame,
         targets: List[str],
         num_folds: int,
         problem: ProblemType,
         seed: int,
-) -> DataFrame:
+) -> pd.DataFrame:
     # TODO: What about this?
     # https://github.com/abhishekkrthakur/autoxgb/blob/334a0410466fbbd68d0f7c67acc2cb949b3d6fdc/src/autoxgb/autoxgb.py#L53
 

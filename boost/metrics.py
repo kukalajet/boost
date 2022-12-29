@@ -2,9 +2,9 @@ from dataclasses import dataclass
 from typing import Callable, List, TypedDict, Any
 from functools import partial
 import copy
-from numpy import np
+import numpy as np
 from sklearn import metrics as skmetrics
-from problem import ProblemType
+from boost.problem import ProblemType
 
 MetricsDict = TypedDict('MetricsDict', {
     'auc': Any,

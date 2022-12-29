@@ -3,15 +3,15 @@ from typing import List, Any, Dict, Literal, Type, Optional, TypedDict
 from pydantic import BaseModel
 from functools import partial
 from optuna import Trial, create_study
-from numpy import np
-from pandas import pd
+import numpy as np
+import pandas as pd
 import joblib
 import copy
 from xgboost import XGBClassifier, XGBRegressor
-from problem import ProblemType
-from utils import dict_mean
-from metrics import Metrics
-from logger import logger
+from boost.problem import ProblemType
+from boost.utils import dict_mean
+from boost.metrics import Metrics
+from boost.logger import logger
 
 
 class ModelConfig(BaseModel):
@@ -49,16 +49,17 @@ ParamsDict = TypedDict('ParamsDict', {
 })
 
 
-def get_params(trial: Type[Trial], model_config: Type[ModelConfig]) -> ParamsDict:
-    params: ParamsDict = {}
-    params["learning_rate"] = trial.suggest_float("learning_rate", 1e-2, 0.25, log=True)
-    params["reg_lambda"] = trial.suggest_float("reg_lambda", 1e-8, 100.0, log=True)
-    params["reg_alpha"] = trial.suggest_float("reg_alpha", 1e-8, 100.0, log=True)
-    params["subsample"] = trial.suggest_float("subsample", 0.1, 1.0)
-    params["colsample_bytree"] = trial.suggest_float("colsample_bytree", 0.1, 1.0)
-    params["max_depth"] = trial.suggest_int("max_depth", 1, 9)
-    params["early_stopping_rounds"] = trial.suggest_int("early_stopping_rounds", 100, 500)
-    params["n_estimators"] = trial.suggest_categorical("n_estimators", [7000, 15000, 20000])
+def get_params(trial: Type[Trial], model_config: Type[ModelConfig]):
+    params = {
+        "learning_rate": trial.suggest_float("learning_rate", 1e-2, 0.25, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 100.0, log=True),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 100.0, log=True),
+        "subsample": trial.suggest_float("subsample", 0.1, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.1, 1.0),
+        "max_depth": trial.suggest_int("max_depth", 1, 9),
+        "early_stopping_rounds": trial.suggest_int("early_stopping_rounds", 100, 500),
+        "n_estimators": trial.suggest_categorical("n_estimators", [7000, 15000, 20000]),
+    }
 
     if model_config.use_gpu:
         params["tree_method"] = "gpu_hist"
@@ -105,7 +106,7 @@ def _save_valid_predictions(final_valid_predictions, model_config, target_encode
         final_valid_predictions.columns = [model_config.idx] + list(target_encoder.classes_)
 
     final_valid_predictions.to_csv(
-        os.path.join(model_config.output, output_file_name),
+        os.path.join("..", model_config.output, output_file_name),
         index=False,
     )
 
@@ -121,7 +122,7 @@ def _save_test_predictions(final_test_predictions, model_config, target_encoder,
     final_test_predictions.insert(
         loc=0, column=model_config.idx, value=test_ids)
     final_test_predictions.to_csv(
-        os.path.join(model_config.output, output_file_name),
+        os.path.join("..", model_config.output, output_file_name),
         index=False,
     )
 
@@ -142,8 +143,8 @@ def optimize(
     scores = []
 
     for fold in range(model_config.num_folds):
-        train_path = f"./output/train_fold_{fold}.feather"
-        valid_path = f"./output/valid_fold_{fold}.feather"
+        train_path = f"../output/train_fold_{fold}.feather"
+        valid_path = f"../output/valid_fold_{fold}.feather"
 
         train_feather = pd.read_feather(train_path)
         valid_feather = pd.read_feather(valid_path)
@@ -219,7 +220,7 @@ def train_model(model_config: ModelConfig) -> Dict[str, Any]:
         model_config=model_config
     )
 
-    db_path = os.path.join(model_config.output, "params.db")
+    db_path = os.path.join("..", model_config.output, "params.db")
     study = create_study(
         direction=direction,
         study_name="testtesttest",
@@ -247,21 +248,21 @@ def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
 
     xgb_model, use_predict_proba, eval_metric, _ = _fetch_model_params(model_config)
 
-    metrics = Metrics(model_config.problem_type)
+    metrics = Metrics(model_config.problem)
     scores = []
 
     final_test_predictions = []
     final_valid_predictions = {}
 
-    target_encoder = joblib.load(f"{model_config.output}/axgb.target_encoder")
+    target_encoder = joblib.load(f"../{model_config.output}/axgb.target_encoder")
 
     for fold in range(model_config.num_folds):
         logger.info(f"Training and predicting for fold {fold}")
         train_path = f"train_fold_{fold}.feather"
         valid_path = f"valid_fold_{fold}.feather"
 
-        train_feather = pd.read_feather(os.path.join(model_config.output, train_path))
-        valid_feather = pd.read_feather(os.path.join(model_config.output, valid_path))
+        train_feather = pd.read_feather(os.path.join('..', model_config.output, train_path))
+        valid_feather = pd.read_feather(os.path.join('..', model_config.output, valid_path))
 
         x_train = train_feather[model_config.features]
         x_valid = valid_feather[model_config.features]
@@ -270,7 +271,7 @@ def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
 
         if model_config.test_filename is not None:
             test_path = f"test_fold_{fold}.feather"
-            test_feather = pd.read_feather(os.path.join(model_config.output, test_path))
+            test_feather = pd.read_feather("..", os.path.join(model_config.output, test_path))
             x_test = test_feather[model_config.features]
             test_ids = test_feather[model_config.idx].values
 
@@ -284,7 +285,7 @@ def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
             **best_params,
         )
 
-        if model_config.problem_type in (ProblemType.multi_column_regression, ProblemType.multi_label_classification):
+        if model_config.problem in (ProblemType.multi_column_regression, ProblemType.multi_label_classification):
             ypred = []
             test_pred = []
             trained_models = []
@@ -298,7 +299,7 @@ def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
                     verbose=False,
                 )
                 trained_models.append(_m)
-                if model_config.problem_type == ProblemType.multi_column_regression:
+                if model_config.problem == ProblemType.multi_column_regression:
                     ypred_temp = _m.predict(x_valid)
                     if model_config.test_filename is not None:
                         test_pred_temp = _m.predict(x_test)
@@ -317,6 +318,7 @@ def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
             joblib.dump(
                 trained_models,
                 os.path.join(
+                    "..",
                     model_config.output,
                     f"axgb_model.{fold}",
                 ),
@@ -334,6 +336,7 @@ def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
             joblib.dump(
                 model,
                 os.path.join(
+                    "..",
                     model_config.output,
                     f"axgb_model.{fold}",
                 ),

@@ -1,18 +1,18 @@
 import os
-import dataclasses
+from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
-from pandas import pd
-from numpy import np
+import numpy as np
+import pandas as pd
 import joblib
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
-from logger import logger
-from problem import determine_problem_type
-from utils import inject_idx, create_folds
-from problem import ProblemType
-from model import ModelConfig, train_model, predict_model
+
+from boost.utils import inject_idx, create_folds
+from boost.problem import ProblemType, determine_problem_type
+from boost.model import ModelConfig, train_model, predict_model
+from boost.logger import logger
 
 
-@dataclasses
+@dataclass
 class Booster:
     train_filename: str
     output: str
@@ -42,14 +42,14 @@ class Booster:
         # TODO: use `reduce_memory_usage` here
 
         problem = determine_problem_type(self.targets, train_df, self.task)
-        train_df = inject_idx(train_df)
+        train_df = inject_idx(train_df, self.idx)
 
         if self.test_filename is not None:
             test_df = pd.read_csv(self.test_filename)
             # TODO: use `reduce_memory_usage` here
             test_df = inject_idx(test_df)
 
-        train_df = create_folds(train_df, problem)
+        train_df = create_folds(train_df, self.targets, self.num_folds, problem, self.seed)
         ignore_columns = [self.idx, "kfold"] + self.targets
 
         if self.features is None:
@@ -75,7 +75,7 @@ class Booster:
 
         logger.info(f"Found {len(categorical_features)} categorical features.")
 
-        if len(self.categorical_features) > 0:
+        if len(categorical_features) > 0:
             logger.info("Encoding categorical features")
 
         categorical_encoders = {}
@@ -97,16 +97,19 @@ class Booster:
                         test_fold[categorical_features].values)
                 categorical_encoders[fold] = ordinal_encoder
 
-            # WHAT'S A FCKING FEATHER? look at `to_feather`
-            fold_train.to_feather(os.path.join(self.output, f"train_fold_{fold}.feather"))
-            fold_valid.to_feather(os.path.join(self.output, f"valid_fold_{fold}.feather"))
+            train_fold_path = f"../{self.output}/train_fold_{fold}.feather"
+            valid_fold_path = f"../{self.output}/valid_fold_{fold}.feather"
+
+            fold_train.to_feather(train_fold_path)
+            fold_valid.to_feather(valid_fold_path)
+
             if self.test_filename is not None:
-                test_fold.to_feather(os.path.join(self.output, f"test_fold_{fold}.feather"))
+                test_fold.to_feather(os.path.join("..", self.output, f"test_fold_{fold}.feather"))
 
         self.model_config = ModelConfig(
             idx=self.idx,
             features=self.features,
-            categorical_features=self.categorical_features,
+            categorical_features=categorical_features,
             train_filename=self.train_filename,
             test_filename=self.test_filename,
             output=self.output,
@@ -125,8 +128,12 @@ class Booster:
 
         # save encoders
         logger.info("Saving encoders")
-        joblib.dump(categorical_encoders, f"{self.output}/axgb.categorical_encoders")
-        joblib.dump(target_encoder, f"{self.output}/axgb.target_encoder")
+
+        categorical_encoders_path = f"../{self.output}/axgb.categorical_encoders"
+        target_encoder_path = f"../{self.output}/axgb.target_encoder"
+
+        joblib.dump(categorical_encoders, categorical_encoders_path)
+        joblib.dump(target_encoder, target_encoder_path)
 
     def train(self):
         self._process_data()
