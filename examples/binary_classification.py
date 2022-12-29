@@ -1,6 +1,6 @@
 from boost.booster import Booster
 
-train_filename = "../data_samples/binary_classification.csv"
+train_filename = "binary_classification.csv"
 output = "output"
 test_filename = None
 task = None

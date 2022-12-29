@@ -28,7 +28,7 @@ class ProblemType(IntEnum):
             raise NotImplementedError
 
 
-def determine_problem_type(
+def get_problem_type(
         targets: List[str],
         df: DataFrame,
         task: str = None,

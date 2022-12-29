@@ -7,7 +7,7 @@ import joblib
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 
 from boost.utils import inject_idx, create_folds
-from boost.problem import ProblemType, determine_problem_type
+from boost.problem import ProblemType, get_problem_type
 from boost.model import ModelConfig, train_model, predict_model
 from boost.logger import logger
 
@@ -38,16 +38,10 @@ class Booster:
             self.idx = "id"
 
     def _process_data(self):
-        train_df = pd.read_csv(self.train_filename)
-        # TODO: use `reduce_memory_usage` here
+        train_df = get_processed_df_from_csv(self.train_filename, self.idx)
+        test_df = get_processed_df_from_csv(self.test_filename, self.idx)
 
-        problem = determine_problem_type(self.targets, train_df, self.task)
-        train_df = inject_idx(train_df, self.idx)
-
-        if self.test_filename is not None:
-            test_df = pd.read_csv(self.test_filename)
-            # TODO: use `reduce_memory_usage` here
-            test_df = inject_idx(test_df)
+        problem = get_problem_type(self.targets, train_df, self.task)
 
         train_df = create_folds(train_df, self.targets, self.num_folds, problem, self.seed)
         ignore_columns = [self.idx, "kfold"] + self.targets
@@ -144,3 +138,15 @@ class Booster:
     def predict(self, params: Dict[str, Any]):
         logger.info("Creating OOF and test predictions")
         predict_model(self.model_config, params)
+
+
+def get_processed_df_from_csv(filename: Optional[str], idx: Optional[str]) -> pd.DataFrame | None:
+    if filename is None:
+        return None
+
+    path_to_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_samples', filename))
+    df = pd.read_csv(path_to_csv)
+    # TODO: use `reduce_memory_usage` here
+    df = inject_idx(df, idx)
+
+    return df
