@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Type, Literal
 import numpy as np
 import pandas as pd
 import joblib
@@ -41,73 +41,27 @@ class Booster:
         train_df = get_processed_df_from_csv(self.train_filename, self.idx)
         test_df = get_processed_df_from_csv(self.test_filename, self.idx)
 
-        problem = get_problem_type(self.targets, train_df, self.task)
+        problem_type = get_problem_type(self.targets, train_df, self.task)
+        train_df = self._create_folds(train_df, problem_type)
+        target_encoder, train_df = self._get_target_encoder(train_df, problem_type)
 
-        train_df = create_folds(train_df, self.targets, self.num_folds, problem, self.seed)
-        ignore_columns = [self.idx, "kfold"] + self.targets
-
-        if self.features is None:
-            self.features = list(train_df.columns)
-            self.features = [x for x in self.features if x not in ignore_columns]
-
-        if problem in [ProblemType.binary_classification, ProblemType.multi_class_classification]:
-            target_encoder = LabelEncoder()
-            target_values = train_df[self.targets].values
-            target_encoder.fit(target_values.reshape(-1))
-            train_df.loc[:, self.targets] = target_encoder.transform(
-                target_values.reshape(-1))
-        else:
-            target_encoder = None
-
-        if self.categorical_features is None:
-            categorical_features = []
-            for feature in self.features:
-                if train_df[feature].dtype == "object":
-                    categorical_features.append(feature)
-        else:
-            categorical_features = self.categorical_features
+        features = self._get_features(train_df)
+        categorical_features = self._get_categorical_features(train_df, features)
 
         logger.info(f"Found {len(categorical_features)} categorical features.")
-
         if len(categorical_features) > 0:
             logger.info("Encoding categorical features")
 
-        categorical_encoders = {}
-        for fold in range(self.num_folds):
-            fold_train = train_df[train_df.kfold != fold].reset_index(drop=True)
-            fold_valid = train_df[train_df.kfold == fold].reset_index(drop=True)
-
-            if self.test_filename is not None:
-                test_fold = test_df.copy(deep=True)
-
-            if len(categorical_features) > 0:
-                ordinal_encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=np.nan)
-                fold_train[categorical_features] = ordinal_encoder.fit_transform(
-                    fold_train[categorical_features].values)
-                fold_valid[categorical_features] = ordinal_encoder.transform(
-                    fold_valid[categorical_features].values)
-                if self.test_filename is not None:
-                    test_fold[categorical_features] = ordinal_encoder.transform(
-                        test_fold[categorical_features].values)
-                categorical_encoders[fold] = ordinal_encoder
-
-            train_fold_path = f"../{self.output}/train_fold_{fold}.feather"
-            valid_fold_path = f"../{self.output}/valid_fold_{fold}.feather"
-
-            fold_train.to_feather(train_fold_path)
-            fold_valid.to_feather(valid_fold_path)
-
-            if self.test_filename is not None:
-                test_fold.to_feather(os.path.join("..", self.output, f"test_fold_{fold}.feather"))
+        categorical_encoders = self._get_categorical_encoders(train_df, test_df, categorical_features)
 
         self.model_config = ModelConfig(
             idx=self.idx,
-            features=self.features,
+            features=features,
             categorical_features=categorical_features,
             train_filename=self.train_filename,
             test_filename=self.test_filename,
             output=self.output,
-            problem=problem,
+            problem=problem_type,
             targets=self.targets,
             use_gpu=self.use_gpu,
             num_folds=self.num_folds,
@@ -119,15 +73,97 @@ class Booster:
 
         logger.info(f"Model config: {self.model_config}")
         logger.info("Saving model config")
-
-        # save encoders
         logger.info("Saving encoders")
 
-        categorical_encoders_path = f"../{self.output}/axgb.categorical_encoders"
-        target_encoder_path = f"../{self.output}/axgb.target_encoder"
+        persist_object(categorical_encoders, self.output, "axgb.categorical_encoders")
+        persist_object(target_encoder, self.output, "axgb.target_encoder")
 
-        joblib.dump(categorical_encoders, categorical_encoders_path)
-        joblib.dump(target_encoder, target_encoder_path)
+    def _create_folds(self, train_df: pd.Dataframe, problem: ProblemType) -> pd.Dataframe:
+        if "kfold" in train_df.columns:
+            self.num_folds = len(np.unique(train_df["kfold"]))
+            logger.info("Using `kfold` for folds from training data")
+            return train_df
+
+        train_df = create_folds(train_df, self.targets, self.num_folds, problem, self.seed)
+        return train_df
+
+    def _get_target_encoder(
+            self,
+            df: pd.DataFrame,
+            problem_type: ProblemType
+    ) -> (Type[LabelEncoder] | None, pd.DataFrame):
+        # I hate this code but couldn't do much better without impacting too much the existing code.
+        # TODO: Refactor this in a way that is not necessary to return a tuple.
+        if problem_type not in [ProblemType.binary_classification, ProblemType.multi_class_classification]:
+            return None, df
+
+        target_encoder = LabelEncoder()
+        target_values = df[self.targets].values
+        target_encoder.fit(target_values.reshape(-1))
+        df.loc[:, self.targets] = target_encoder.transform(
+            target_values.reshape(-1))
+
+        return target_encoder, df
+
+    def _get_features(self, train_df: pd.DataFrame) -> List[str]:
+        if self.features is not None:
+            return self.features
+
+        ignore_columns = [self.idx, "kfold"] + self.targets
+        features = list(train_df.columns)
+        features = [x for x in features if x not in ignore_columns]
+        return features
+
+    def _get_categorical_features(self, df: pd.DataFrame, features: List[str]) -> List[str]:
+        if self.categorical_features is not None:
+            return self.categorical_features
+
+        categorical_features = []
+        for feature in features:
+            if df[feature].dtype == "object":
+                categorical_features.append(feature)
+
+        return categorical_features
+
+    def _get_categorical_encoders(
+            self,
+            train_df: pd.DataFrame,
+            test_df: pd.DataFrame | None,
+            categorical_features: List[str],
+    ) -> Dict[int, OrdinalEncoder] | None:
+        categorical_encoders = {}
+        for fold in range(self.num_folds):
+            train_fold = train_df[train_df.kfold != fold].reset_index(drop=True)
+            valid_fold = train_df[train_df.kfold == fold].reset_index(drop=True)
+            if test_df is not None:
+                test_fold = test_df.copy(deep=True)
+
+            if len(categorical_features) > 0:
+                ordinal_encoder = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=np.nan)
+
+                train_fold_values = train_fold[categorical_features].values
+                train_fold[categorical_features] = ordinal_encoder.fit_transform(train_fold_values)
+
+                valid_fold_values = valid_fold[categorical_features].values
+                valid_fold[categorical_features] = ordinal_encoder.transform(valid_fold_values)
+
+                if test_df is not None:
+                    test_fold_values = test_fold[categorical_features].values
+                    test_fold[categorical_features] = ordinal_encoder.transform(test_fold_values)
+
+                categorical_encoders[fold] = ordinal_encoder
+
+            train_fold_path = get_fold_path(self.output, fold, "train")
+            train_fold.to_feather(train_fold_path)
+
+            valid_fold_path = get_fold_path(self.output, fold, "valid")
+            valid_fold.to_feather(valid_fold_path)
+
+            if test_df is not None:
+                test_fold_path = get_fold_path(self.output, fold, "test")
+                test_fold.to_feather(test_fold_path)
+
+        return categorical_encoders
 
     def train(self):
         self._process_data()
@@ -150,3 +186,14 @@ def get_processed_df_from_csv(filename: Optional[str], idx: Optional[str]) -> pd
     df = inject_idx(df, idx)
 
     return df
+
+
+def get_fold_path(output: str, fold: int, set_type: Literal["train", "valid", "test"]) -> str:
+    filename = f"{set_type}_fold_{fold}.feather"
+    fold_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', output, filename))
+    return fold_path
+
+
+def persist_object(value: Any, relative_path: str, filename: str):
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', relative_path, filename))
+    joblib.dump(value, path)
