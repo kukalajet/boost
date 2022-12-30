@@ -78,7 +78,7 @@ class Booster:
         persist_object(categorical_encoders, self.output, "axgb.categorical_encoders")
         persist_object(target_encoder, self.output, "axgb.target_encoder")
 
-    def _create_folds(self, train_df: pd.Dataframe, problem: ProblemType) -> pd.Dataframe:
+    def _create_folds(self, train_df: pd.DataFrame, problem: ProblemType) -> pd.DataFrame:
         if "kfold" in train_df.columns:
             self.num_folds = len(np.unique(train_df["kfold"]))
             logger.info("Using `kfold` for folds from training data")
