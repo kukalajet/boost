@@ -1,4 +1,6 @@
-from typing import List, Dict, Any, Optional
+import joblib
+import os
+from typing import List, Dict, Any, Optional, Literal
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold, StratifiedKFold
@@ -54,9 +56,37 @@ def create_folds(
     return df
 
 
-def dict_mean(dict_list) -> Dict[str, Any]:
+def mean_dict_values(values: List[Dict[str, int]]) -> Dict[str, Any]:
     mean_dict = {}
-    for key in dict_list[0].keys():
-        mean_dict[key] = sum(d[key] for d in dict_list) / len(dict_list)
+    for key in values[0].keys():
+        mean_dict[key] = sum(d[key] for d in values) / len(values)
 
     return mean_dict
+
+
+def get_processed_df_from_csv(filename: Optional[str], idx: Optional[str]) -> pd.DataFrame | None:
+    if filename is None:
+        return None
+
+    path_to_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_samples', filename))
+    df = pd.read_csv(path_to_csv)
+    # TODO: use `reduce_memory_usage` here
+    df = inject_idx(df, idx)
+
+    return df
+
+
+def get_fold_path(output: str, fold: int, set_type: Literal["train", "valid", "test"]) -> str:
+    filename = f"{set_type}_fold_{fold}.feather"
+    fold_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', output, filename))
+    return fold_path
+
+
+def persist_object(value: Any, relative_path: str, filename: str):
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', relative_path, filename))
+    joblib.dump(value, path)
+
+
+def load_persisted_object(path: str):
+    value = joblib.load(path)
+    return value

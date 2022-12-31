@@ -1,12 +1,9 @@
-import os
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any, Type, Literal
+from typing import Optional, List, Dict, Any
 import numpy as np
 import pandas as pd
-import joblib
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
-
-from boost.utils import inject_idx, create_folds
+from boost.utils import create_folds, get_fold_path, get_processed_df_from_csv, persist_object
 from boost.problem import ProblemType, get_problem_type
 from boost.model import ModelConfig, train_model, predict_model
 from boost.logger import logger
@@ -61,7 +58,7 @@ class Booster:
             train_filename=self.train_filename,
             test_filename=self.test_filename,
             output=self.output,
-            problem=problem_type,
+            problem_type=problem_type,
             targets=self.targets,
             use_gpu=self.use_gpu,
             num_folds=self.num_folds,
@@ -91,7 +88,7 @@ class Booster:
             self,
             df: pd.DataFrame,
             problem_type: ProblemType
-    ) -> (Type[LabelEncoder] | None, pd.DataFrame):
+    ) -> (LabelEncoder | None, pd.DataFrame):
         # I hate this code but couldn't do much better without impacting too much the existing code.
         # TODO: Refactor this in a way that is not necessary to return a tuple.
         if problem_type not in [ProblemType.binary_classification, ProblemType.multi_class_classification]:
@@ -174,26 +171,3 @@ class Booster:
     def predict(self, params: Dict[str, Any]):
         logger.info("Creating OOF and test predictions")
         predict_model(self.model_config, params)
-
-
-def get_processed_df_from_csv(filename: Optional[str], idx: Optional[str]) -> pd.DataFrame | None:
-    if filename is None:
-        return None
-
-    path_to_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_samples', filename))
-    df = pd.read_csv(path_to_csv)
-    # TODO: use `reduce_memory_usage` here
-    df = inject_idx(df, idx)
-
-    return df
-
-
-def get_fold_path(output: str, fold: int, set_type: Literal["train", "valid", "test"]) -> str:
-    filename = f"{set_type}_fold_{fold}.feather"
-    fold_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', output, filename))
-    return fold_path
-
-
-def persist_object(value: Any, relative_path: str, filename: str):
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', relative_path, filename))
-    joblib.dump(value, path)

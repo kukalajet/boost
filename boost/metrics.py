@@ -24,6 +24,8 @@ MetricsDict = TypedDict('MetricsDict', {
 class Metrics:
     problem: ProblemType
 
+    # This shouldn't be in `__post_init__`.
+    # TODO: Move this in a callable function.
     def __post_init__(self):
         values: List[tuple[str, Callable]] = []
 

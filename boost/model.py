@@ -1,15 +1,16 @@
 import os
-from typing import List, Any, Dict, Literal, Type, Optional, TypedDict
+from dataclasses import dataclass
+from typing import List, Any, Dict, Literal, Optional, Type
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 from pydantic import BaseModel
 from functools import partial
 from optuna import Trial, create_study
 import numpy as np
 import pandas as pd
-import joblib
 import copy
 from xgboost import XGBClassifier, XGBRegressor
 from boost.problem import ProblemType
-from boost.utils import dict_mean
+from boost.utils import mean_dict_values, load_persisted_object, persist_object, get_fold_path
 from boost.metrics import Metrics
 from boost.logger import logger
 
@@ -19,7 +20,7 @@ class ModelConfig(BaseModel):
     test_filename: Optional[str] = None
     idx: str
     targets: List[str]
-    problem: ProblemType
+    problem_type: ProblemType
     output: str
     features: List[str]
     num_folds: int
@@ -31,52 +32,53 @@ class ModelConfig(BaseModel):
     fast: bool
 
 
-ParamsDict = TypedDict('ParamsDict', {
-    'learning_rate': float,
-    'reg_lambda': float,
-    'reg_alpha': float,
-    'subsample': float,
-    'colsample_bytree': float,
-    'max_depth': int,
-    'early_stopping_rounds': int,
-    'n_estimators': Any,
-    'tree_method': Any,
-    'gpu_id': int,
-    'predictor': Any,
-    'booster': Any,
-    'gamma': float,
-    'grow_policy': Any,
-})
+@dataclass(order=False)
+class Params:
+    learning_rate: float
+    reg_lambda: float
+    reg_alpha: float
+    subsample: float
+    colsample_bytree: float
+    max_depth: int
+    early_stopping_rounds: int
+    n_estimators: int
+    tree_method: Optional[Literal["gpu_hist", "exact", "approx", "hist"]] = None
+    gpu_id: Optional[int] = None
+    predictor: Optional[str] = None
+    booster: Optional[Literal["gbtree", "gblinear"]] = None
+    gamma: Optional[float] = None
+    grow_policy: Optional[Literal["depthwise", "lossguide"]] = None
 
 
-def get_params(trial: Type[Trial], model_config: Type[ModelConfig]):
-    params = {
-        "learning_rate": trial.suggest_float("learning_rate", 1e-2, 0.25, log=True),
-        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 100.0, log=True),
-        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 100.0, log=True),
-        "subsample": trial.suggest_float("subsample", 0.1, 1.0),
-        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.1, 1.0),
-        "max_depth": trial.suggest_int("max_depth", 1, 9),
-        "early_stopping_rounds": trial.suggest_int("early_stopping_rounds", 100, 500),
-        "n_estimators": trial.suggest_categorical("n_estimators", [7000, 15000, 20000]),
-    }
+def _get_params(trial: Trial, model_config: ModelConfig) -> Params:
+    params = Params(
+        learning_rate=trial.suggest_float("learning_rate", 1e-2, 0.25, log=True),
+        reg_lambda=trial.suggest_float("reg_lambda", 1e-8, 100.0, log=True),
+        reg_alpha=trial.suggest_float("reg_alpha", 1e-8, 100.0, log=True),
+        subsample=trial.suggest_float("subsample", 0.1, 1.0),
+        colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
+        max_depth=trial.suggest_int("max_depth", 1, 9),
+        early_stopping_rounds=trial.suggest_int("early_stopping_rounds", 100, 500),
+        n_estimators=trial.suggest_categorical("n_estimators", [7000, 15000, 20000]),
+    )
 
     if model_config.use_gpu:
-        params["tree_method"] = "gpu_hist"
-        params["gpu_id"] = 0
-        params["predictor"] = "gpu_predictor"
+        params.tree_method = "gpu_hist"
+        params.gpu_id = 0
+        params.predictor = "gpu_predictor"
     else:
-        params["tree_method"] = trial.suggest_categorical("tree_method", ["exact", "approx", "hist"])
-        params["booster"] = trial.suggest_categorical("booster", ["gbtree", "gblinear"])
-        if params["booster"] == "gbtree":
-            params["gamma"] = trial.suggest_float("gamma", 1e-8, 1.0, log=True)
-            params["grow_policy"] = trial.suggest_categorical("grow_policy", ["depthwise", "lossguide"])
+        params.tree_method = trial.suggest_categorical("tree_method", ["exact", "approx", "hist"])
+        params.booster = trial.suggest_categorical("booster", ["gbtree", "gblinear"])
+        if params.booster == "gbtree":
+            params.gamma = trial.suggest_float("gamma", 1e-8, 1.0, log=True)
+            params.grow_policy = trial.suggest_categorical("grow_policy", ["depthwise", "lossguide"])
 
     return params
 
 
-def _fetch_model_params(model_config: ModelConfig):
-    problem = model_config.problem
+def _fetch_model_params(model_config: ModelConfig) -> (
+        Type[XGBClassifier | XGBRegressor], bool, Literal["logloss", "mlogloss", "rmse"], str):
+    problem = model_config.problem_type
     direction = "minimize"
     match problem:
         case ProblemType.binary_classification | ProblemType.multi_label_classification:
@@ -97,100 +99,127 @@ def _fetch_model_params(model_config: ModelConfig):
     return model, predict_probabilities, eval_metric, direction
 
 
-def _save_valid_predictions(final_valid_predictions, model_config, target_encoder, output_file_name):
-    final_valid_predictions = pd.DataFrame.from_dict(
-        final_valid_predictions, orient="index").reset_index()
+def _save_predictions(
+        predictions: Dict[int, np.ndarray],
+        model_config: ModelConfig,
+        target_encoder: LabelEncoder | OrdinalEncoder,
+        filename: str,
+):
+    predictions = pd.DataFrame.from_dict(predictions, orient="index").reset_index()
     if target_encoder is None:
-        final_valid_predictions.columns = [model_config.idx] + model_config.targets
+        predictions.columns = [model_config.idx] + model_config.targets
     else:
-        final_valid_predictions.columns = [model_config.idx] + list(target_encoder.classes_)
+        predictions.columns = [model_config.idx] + list(target_encoder.classes_)
 
-    final_valid_predictions.to_csv(
-        os.path.join("..", model_config.output, output_file_name),
-        index=False,
-    )
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_config.output, filename))
+    predictions.to_csv(path, index=False)
 
 
-def _save_test_predictions(final_test_predictions, model_config, target_encoder, test_ids, output_file_name):
-    final_test_predictions = np.mean(final_test_predictions, axis=0)
+def _save_test_predictions(
+        predictions: np.ndarray,
+        model_config: ModelConfig,
+        target_encoder: LabelEncoder | OrdinalEncoder,
+        filename: str,
+        test_ids: List[int],
+):
+    predictions = np.mean(predictions, axis=0)
     if target_encoder is None:
-        final_test_predictions = pd.DataFrame(
-            final_test_predictions, columns=model_config.targets)
+        predictions = pd.DataFrame(predictions, columns=model_config.targets)
     else:
-        final_test_predictions = pd.DataFrame(
-            final_test_predictions, columns=list(target_encoder.classes_))
-    final_test_predictions.insert(
-        loc=0, column=model_config.idx, value=test_ids)
-    final_test_predictions.to_csv(
-        os.path.join("..", model_config.output, output_file_name),
-        index=False,
-    )
+        predictions = pd.DataFrame(predictions, columns=list(target_encoder.classes_))
+    predictions.insert(loc=0, column=model_config.idx, value=test_ids)
+
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_config.output, filename))
+    predictions.to_csv(path, index=False)
 
 
-def optimize(
-        trial: any,
-        xgb_model: Type[XGBClassifier] | Type[XGBRegressor],
-        predict_probabilities: bool,
+def _get_model_instance_with_params(
+        model: Type[XGBClassifier | XGBRegressor],
+        params: Params,
         eval_metric: Literal['logloss', 'mlogloss', 'rmse'],
-        model_config: Type[ModelConfig],
-) -> Dict[str, Any]:
-    params = get_params(trial, model_config)
-    early_stopping_rounds = params["early_stopping_rounds"]
-    params["early_stopping_rounds"] = None
+        random_state: int,
+) -> XGBClassifier | XGBRegressor:
+    return model(
+        learning_rate=params.learning_rate,
+        reg_lambda=params.reg_lambda,
+        reg_alpha=params.reg_alpha,
+        subsample=params.subsample,
+        colsample_bytree=params.colsample_bytree,
+        max_depth=params.max_depth,
+        early_stopping_rounds=params.early_stopping_rounds,
+        n_estimators=params.n_estimators,
+        tree_method=params.tree_method,
+        gpu_id=params.gpu_id,
+        predictor=params.predictor,
+        booster=params.booster,
+        gamma=params.gamma,
+        grow_policy=params.grow_policy,
+        eval_metric=eval_metric,
+        random_state=random_state,
+        use_label_encoder=False,
+    )
 
-    metrics = Metrics(model_config.problem)
+
+def _get_model_instance_from_best_params(
+        model: Type[XGBClassifier | XGBRegressor],
+        best_params: Dict[str, Any],
+        eval_metric: Literal['logloss', 'mlogloss', 'rmse'],
+        random_state: int,
+) -> XGBClassifier | XGBRegressor:
+    return model(random_state=random_state, eval_metric=eval_metric, use_label_encoder=False, **best_params)
+
+
+def _optimize(
+        trial: Trial,
+        eval_metric: Literal['logloss', 'mlogloss', 'rmse'],
+        model_class: Type[XGBClassifier | XGBRegressor],
+        model_config: ModelConfig,
+        predict_probabilities: bool,
+):
+    params = _get_params(trial, model_config)
+    metrics = Metrics(model_config.problem_type)
 
     scores = []
-
     for fold in range(model_config.num_folds):
-        train_path = f"../output/train_fold_{fold}.feather"
-        valid_path = f"../output/valid_fold_{fold}.feather"
+        train_fold_path = get_fold_path(model_config.output, fold, "train")
+        train_fold = pd.read_feather(train_fold_path)
+        x_train = train_fold[model_config.features]
+        y_train = train_fold[model_config.targets].values
 
-        train_feather = pd.read_feather(train_path)
-        valid_feather = pd.read_feather(valid_path)
+        valid_fold_path = get_fold_path(model_config.output, fold, "valid")
+        valid_fold = pd.read_feather(valid_fold_path)
+        x_valid = valid_fold[model_config.features]
+        y_valid = valid_fold[model_config.targets].values
 
-        x_train = train_feather[model_config.features]
-        x_valid = valid_feather[model_config.features]
+        model = _get_model_instance_with_params(model_class, params, eval_metric, random_state=model_config.seed)
 
-        y_train = train_feather[model_config.targets].values
-        y_valid = valid_feather[model_config.targets].values
-
-        # train model
-        model = xgb_model(
-            random_state=model_config.seed,
-            eval_metric=eval_metric,
-            use_label_encoder=False,
-            **params,
-        )
-
-        if model_config.problem in (ProblemType.multi_column_regression, ProblemType.multi_label_classification):
+        if model_config.problem_type in (ProblemType.multi_column_regression, ProblemType.multi_label_classification):
             predictions = []
             models = [model] * len(model_config.targets)
 
-            for idx, _model in enumerate(models):
-                _model.fit(
+            for index, current_model in enumerate(models):
+                current_model.fit(
                     x_train,
-                    y_train[:, idx],
-                    early_stopping_rounds=early_stopping_rounds,
-                    eval_set=[(x_valid, y_valid[:, idx])],
+                    y_train[:, index],
+                    early_stopping_rounds=params.early_stopping_rounds,
+                    eval_set=[(x_valid, y_valid[:, index])],
                     verbose=False,
                 )
 
-                if model_config.problem == ProblemType.multi_column_regression:
-                    temp = _model.predict(x_valid)
+                if model_config.problem_type == ProblemType.multi_column_regression:
+                    prediction = current_model.predict(x_valid)
                 else:
-                    temp = _model.predict_proba(x_valid)[:, 1]
-                predictions.append(temp)
+                    prediction = current_model.predict_proba(x_valid)[:, 1]
+                predictions.append(prediction)
 
             predictions = np.column_stack(predictions)
-
         else:
             model.fit(
                 x_train,
                 y_train,
-                early_stopping_rounds=early_stopping_rounds,
+                early_stopping_rounds=params.early_stopping_rounds,
                 eval_set=[(x_valid, y_valid)],
-                verbose=False,
+                verbose=False
             )
 
             if predict_probabilities:
@@ -200,171 +229,142 @@ def optimize(
 
         score = metrics.calculate(y_valid, predictions)
         scores.append(score)
+
         if model_config.fast is True:
             break
 
-    mean_metrics = dict_mean(scores)
+    mean_metrics = mean_dict_values(scores)
     print(f"Metrics: {mean_metrics}")
 
     return mean_metrics[eval_metric]
 
 
 def train_model(model_config: ModelConfig) -> Dict[str, Any]:
-    model, predict_probabilities, eval_metric, direction = _fetch_model_params(model_config)
+    model_class, predict_probabilities, eval_metric, direction = _fetch_model_params(model_config)
 
-    optimize_function = partial(
-        optimize,
-        xgb_model=model,
-        predict_probabilities=predict_probabilities,
-        eval_metric=eval_metric,
-        model_config=model_config
-    )
+    optimize_function = partial(_optimize, eval_metric=eval_metric, model_class=model_class, model_config=model_config,
+                                predict_probabilities=predict_probabilities)
 
-    db_path = os.path.join("..", model_config.output, "params.db")
-    study = create_study(
-        direction=direction,
-        study_name="testtesttest",
-        storage=f"sqlite:///{db_path}",
-        load_if_exists=True
-    )
+    db_path = get_db_path(model_config.output)
+    study = create_study(direction=direction, study_name="testtesttest", storage=f"sqlite:///{db_path}",
+                         load_if_exists=True)
 
-    study.optimize(
-        optimize_function,
-        n_trials=model_config.num_trials,
-        timeout=model_config.time_limit,
-    )
+    study.optimize(optimize_function, n_trials=model_config.num_trials, timeout=model_config.time_limit)
 
     return study.best_params
 
 
-def predict_model(model_config: ModelConfig, best_params: Dict[str, Any]):
-    early_stopping_rounds = best_params["early_stopping_rounds"]
-    del best_params["early_stopping_rounds"]
+def get_db_path(relative_path: str):
+    db_filename = "params.db"
+    db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', relative_path, db_filename))
+    return db_path
 
+
+def predict_model(model_config: ModelConfig, params: Dict[str, Any]):
     if model_config.use_gpu is True:
-        best_params["tree_method"] = "gpu_hist"
-        best_params["gpu_id"] = 0
-        best_params["predictor"] = "gpu_predictor"
+        params["tree_method"] = "gpu_hist"
+        params["gpu_id"] = 0
+        params["predictor"] = "gpu_predictor"
 
-    xgb_model, use_predict_proba, eval_metric, _ = _fetch_model_params(model_config)
+    early_stopping_rounds = params["early_stopping_rounds"]
+    del params["early_stopping_rounds"]
 
-    metrics = Metrics(model_config.problem)
+    model_class, predict_probabilities, eval_metric, _ = _fetch_model_params(model_config)
+    metrics = Metrics(model_config.problem_type)
+    target_encoder = _load_persisted_target_encoder(model_config.output)
+    # TODO: add a `has_tests` property to `ModelConfig`
+    has_tests = model_config.test_filename is not None
+
+    valid_predictions = {}
+    test_predictions = []
     scores = []
-
-    final_test_predictions = []
-    final_valid_predictions = {}
-
-    target_encoder = joblib.load(f"../{model_config.output}/axgb.target_encoder")
-
     for fold in range(model_config.num_folds):
         logger.info(f"Training and predicting for fold {fold}")
-        train_path = f"train_fold_{fold}.feather"
-        valid_path = f"valid_fold_{fold}.feather"
 
-        train_feather = pd.read_feather(os.path.join('..', model_config.output, train_path))
-        valid_feather = pd.read_feather(os.path.join('..', model_config.output, valid_path))
+        train_fold_path = get_fold_path(model_config.output, fold, "train")
+        train_fold = pd.read_feather(train_fold_path)
+        x_train = train_fold[model_config.features]
+        y_train = train_fold[model_config.targets].values
 
-        x_train = train_feather[model_config.features]
-        x_valid = valid_feather[model_config.features]
+        valid_fold_path = get_fold_path(model_config.output, fold, "valid")
+        valid_fold = pd.read_feather(valid_fold_path)
+        x_valid = valid_fold[model_config.features]
+        y_valid = valid_fold[model_config.targets].values
+        valid_ids = valid_fold[model_config.idx].values
 
-        valid_ids = valid_feather[model_config.idx].values
+        if has_tests:
+            test_fold_path = get_fold_path(model_config.output, fold, "test")
+            test_fold = pd.read_feather(test_fold_path)
+            x_test = test_fold[model_config.features]
+            test_ids = test_fold[model_config.idx].values
 
-        if model_config.test_filename is not None:
-            test_path = f"test_fold_{fold}.feather"
-            test_feather = pd.read_feather("..", os.path.join(model_config.output, test_path))
-            x_test = test_feather[model_config.features]
-            test_ids = test_feather[model_config.idx].values
+        model = _get_model_instance_from_best_params(model_class, params, eval_metric, random_state=model_config.seed)
 
-        y_train = train_feather[model_config.targets].values
-        y_valid = valid_feather[model_config.targets].values
+        if model_config.problem_type in (ProblemType.multi_column_regression, ProblemType.multi_label_classification):
+            predictions = []
+            test_predictions = []
+            models = []
 
-        model = xgb_model(
-            random_state=model_config.seed,
-            eval_metric=eval_metric,
-            use_label_encoder=False,
-            **best_params,
-        )
+            for index in range(len(model_config.targets)):
+                cloned_model = copy.deepcopy(model)
+                cloned_model.fit(x_train, y_train[:, index], early_stopping_rounds=early_stopping_rounds,
+                                 eval_set=[(x_valid, y_valid[:, index])], verbose=False)
+                models.append(cloned_model)
 
-        if model_config.problem in (ProblemType.multi_column_regression, ProblemType.multi_label_classification):
-            ypred = []
-            test_pred = []
-            trained_models = []
-            for idx in range(len(model_config.targets)):
-                _m = copy.deepcopy(model)
-                _m.fit(
-                    x_train,
-                    y_train[:, idx],
-                    early_stopping_rounds=early_stopping_rounds,
-                    eval_set=[(x_valid, y_valid[:, idx])],
-                    verbose=False,
-                )
-                trained_models.append(_m)
-                if model_config.problem == ProblemType.multi_column_regression:
-                    ypred_temp = _m.predict(x_valid)
-                    if model_config.test_filename is not None:
-                        test_pred_temp = _m.predict(x_test)
+                if model_config.problem_type == ProblemType.multi_column_regression:
+                    prediction = cloned_model.predict(x_valid)
+                    if has_tests:
+                        test_prediction = cloned_model.predict(x_test)
                 else:
-                    ypred_temp = _m.predict_proba(x_valid)[:, 1]
-                    if model_config.test_filename is not None:
-                        test_pred_temp = _m.predict_proba(x_test)[:, 1]
+                    prediction = cloned_model.predict_proba(x_valid)[:, 1]
+                    if has_tests:
+                        test_prediction = cloned_model.predict_proba(x_test)[:, 1]
 
-                ypred.append(ypred_temp)
-                if model_config.test_filename is not None:
-                    test_pred.append(test_pred_temp)
+                predictions.append(prediction)
+                if has_tests:
+                    test_predictions.append(test_prediction)
 
-            ypred = np.column_stack(ypred)
-            if model_config.test_filename is not None:
-                test_pred = np.column_stack(test_pred)
-            joblib.dump(
-                trained_models,
-                os.path.join(
-                    "..",
-                    model_config.output,
-                    f"axgb_model.{fold}",
-                ),
-            )
+            predictions = np.column_stack(predictions)
+            if has_tests:
+                test_predictions = np.column_stack(test_predictions)
+
+            persist_object(models, model_config.output, f"axgb_model.{fold}")
 
         else:
-            model.fit(
-                x_train,
-                y_train,
-                early_stopping_rounds=early_stopping_rounds,
-                eval_set=[(x_valid, y_valid)],
-                verbose=False,
-            )
+            model.fit(x_train, y_train, early_stopping_rounds=early_stopping_rounds,
+                      eval_set=[(x_valid, y_valid)], verbose=False)
 
-            joblib.dump(
-                model,
-                os.path.join(
-                    "..",
-                    model_config.output,
-                    f"axgb_model.{fold}",
-                ),
-            )
-
-            if use_predict_proba:
-                ypred = model.predict_proba(x_valid)
-                if model_config.test_filename is not None:
-                    test_pred = model.predict_proba(x_test)
+            if predict_probabilities:
+                predictions = model.predict_proba(x_valid)
+                if has_tests:
+                    test_predictions = model.predict_proba(x_test)
             else:
-                ypred = model.predict(x_valid)
-                if model_config.test_filename is not None:
-                    test_pred = model.predict(x_test)
+                predictions = model.predict(x_valid)
+                if has_tests:
+                    test_predictions = model.predict(x_test)
 
-        final_valid_predictions.update(dict(zip(valid_ids, ypred)))
-        if model_config.test_filename is not None:
-            final_test_predictions.append(test_pred)
+            persist_object(model, model_config.output, f"axgb_model.{fold}")
 
-        # calculate metric
-        metric_dict = metrics.calculate(y_valid, ypred)
-        scores.append(metric_dict)
+        valid_predictions.update(dict(zip(valid_ids, predictions)))
+        if has_tests:
+            test_predictions.append(test_predictions)
+
+        metric = metrics.calculate(y_valid, predictions)
+        scores.append(metric)
         logger.info(f"Fold {fold} done!")
 
-    mean_metrics = dict_mean(scores)
+    mean_metrics = mean_dict_values(scores)
     logger.info(f"Metrics: {mean_metrics}")
-    _save_valid_predictions(final_valid_predictions, model_config, target_encoder, "oof_predictions.csv")
+    _save_predictions(valid_predictions, model_config, target_encoder, "oof_predictions.csv")
 
-    if model_config.test_filename is not None:
-        _save_test_predictions(final_test_predictions, model_config, target_encoder, test_ids, "test_predictions.csv")
+    if has_tests:
+        _save_test_predictions(test_predictions, model_config, target_encoder, "oof_predictions.csv", test_ids)
     else:
-        logger.info("No test data supplied. Only OOF predictions were generated")
+        logger.info("No test data supplied. Only OOF predictions were generated.")
+
+
+def _load_persisted_target_encoder(relative_folder: str) -> LabelEncoder:
+    encoder_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '..', relative_folder, "axgb.target_encoder"))
+    encoder = load_persisted_object(encoder_path)
+    return encoder
