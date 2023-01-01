@@ -70,8 +70,9 @@ class Booster:
 
         logger.info(f"Model config: {self.model_config}")
         logger.info("Saving model config")
-        logger.info("Saving encoders")
+        persist_object(self.model_config, self.output, "axgb.config")
 
+        logger.info("Saving encoders")
         persist_object(categorical_encoders, self.output, "axgb.categorical_encoders")
         persist_object(target_encoder, self.output, "axgb.target_encoder")
 
