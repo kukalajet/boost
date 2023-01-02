@@ -1,23 +1,12 @@
 from dataclasses import dataclass
-from typing import Callable, List, TypedDict, Any
+from typing import Callable, List, TypedDict, Any, Literal, Dict
 from functools import partial
 import copy
 import numpy as np
 from sklearn import metrics as skmetrics
 from boost.problem import ProblemType
 
-MetricsDict = TypedDict('MetricsDict', {
-    'auc': Any,
-    'logloss': Any,
-    'f1': Any,
-    'accuracy': Any,
-    'mlogloss': Any,
-    'r2': Any,
-    'mse': Any,
-    'mae': Any,
-    'rmse': Any,
-    'rmsle': Any,
-})
+MetricsType = Dict[Literal['auc', 'logloss', 'f1', 'accuracy', 'mlogloss', 'r2', 'mse', 'mae', 'rmse', 'rmsle'], Any]
 
 
 @dataclass
@@ -54,8 +43,8 @@ class Metrics:
 
         self.values = values
 
-    def calculate(self, y_true: List[Any], predictions: List[Any]) -> MetricsDict:
-        metrics: MetricsDict = {}
+    def calculate(self, y_true: List[Any], predictions: List[Any]) -> MetricsType:
+        metrics: MetricsType = {}
         for name, func in self.values:
             if self.problem == ProblemType.binary_classification:
                 if name == "auc":
