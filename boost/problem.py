@@ -39,36 +39,36 @@ def get_problem_type(
         target_type = type_of_target(values)
 
         if target_type == "continuous":
-            problem = ProblemType.single_column_regression
+            problem_type = ProblemType.single_column_regression
         elif target_type == "continuous-multioutput":
-            problem = ProblemType.multi_column_regression
+            problem_type = ProblemType.multi_column_regression
         elif target_type == "binary":
-            problem = ProblemType.binary_classification
+            problem_type = ProblemType.binary_classification
         elif target_type == "multiclass":
-            problem = ProblemType.multi_class_classification
+            problem_type = ProblemType.multi_class_classification
         elif target_type == "multilabel-indicator":
-            problem = ProblemType.multi_label_classification
+            problem_type = ProblemType.multi_label_classification
         else:
-            raise Exception("Unable to infer `problem`. Please provide `classification` or `regression`")
+            raise Exception("Unable to infer `problem_type`. Please provide `classification` or `regression`")
 
-        return problem
+        return problem_type
 
     if task == "classification":
         if len(targets) == 1:
             unique_values = np.unique(values)
             if len(unique_values) == 2:
-                problem = ProblemType.binary_classification
+                problem_type = ProblemType.binary_classification
             else:
-                problem = ProblemType.multi_label_classification
+                problem_type = ProblemType.multi_label_classification
         else:
-            problem = ProblemType.multi_label_classification
+            problem_type = ProblemType.multi_label_classification
 
     elif task == "regression":
         if len(targets) == 1:
-            problem = ProblemType.single_column_regression
+            problem_type = ProblemType.single_column_regression
         else:
-            problem = ProblemType.multi_column_regression
+            problem_type = ProblemType.multi_column_regression
     else:
         raise Exception("Problem type not understood")
 
-    return problem
+    return problem_type

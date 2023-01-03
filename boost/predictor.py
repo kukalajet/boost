@@ -1,29 +1,34 @@
 import os
 import json
-from dataclasses import dataclass
 from typing import Any, List, Dict
+
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
-from pydantic import create_model
 import pandas as pd
 import numpy as np
+from pydantic import create_model
 
 from boost.model import ModelConfig
 from boost.problem import ProblemType
 from boost.utils import load_persisted_object
 from boost.model import _fetch_model_params
+from boost.logger import logger
 
 
-@dataclass
 class Predictor:
-    model_folder: str
+    def __init__(self, model_folder: str, idx: str = None):
+        self.model_folder = model_folder
 
-    def __post_init__(self):
         self.model_config = _load_model_config(self.model_folder)
         self.target_encoder = _load_target_encoder(self.model_folder)
         self.categorical_encoders = _load_categorical_encoders(self.model_folder)
         self.models = _load_models(self.model_folder, self.model_config.num_folds)
         # TODO: make `_fetch_model_params` public.
         _, self.predict_probabilities, _, _ = _fetch_model_params(self.model_config)
+
+        self.idx = idx
+        if self.idx is None:
+            logger.warning("No id column specified. Will default to `id`.")
+            self.idx = "id"
 
     def get_prediction_schema(self):
         schema = {"schema": {}}
@@ -82,7 +87,7 @@ class Predictor:
     def predict(self, sample: str = None):
         sample = json.loads(sample)
         sample_df = pd.DataFrame.from_dict(sample, orient="index").T
-        sample_df[self.model_config.idx] = 0
+        sample_df[self.idx] = 0
         predictions = self._predict_from_df(sample_df)
         predictions = predictions.to_dict(orient="records")[0]
         return predictions
