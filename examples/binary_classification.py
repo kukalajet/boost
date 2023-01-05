@@ -3,23 +3,23 @@ from boost.predictor import Predictor
 
 # from boost.booster import Booster
 
-# train_filename = "binary_classification.csv"
-output = "output"
-# test_filename = None
-# task = None
-# idx = None
-# targets = ["income"]
-# features = None
-# categorical_features = None
-# use_gpu = False
-# num_folds = 5
-# seed = 42
-# num_trials = 100
-# time_limit = 360
+train_filename = "binary_classification.csv"
+model_id = "binary_classification"
+test_filename = None
+task = None
+idx = None
+targets = ["income"]
+features = None
+categorical_features = None
+use_gpu = False
+num_folds = 5
+seed = 42
+num_trials = 100
+time_limit = 360
 # fast = False
 #
 # data_loader = DataLoader(
-#     model_folder=output,
+#     model_id=model_id,
 #     train_filename=train_filename,
 #     test_filename=test_filename,
 #     task=task,
@@ -37,7 +37,7 @@ output = "output"
 # learner = data_loader.get_learner()
 # learner.train()
 #
-predictor = Predictor(model_folder=output)
+predictor = Predictor(model_id=model_id)
 
 # test = Booster(
 #     train_filename=train_filename,
@@ -60,7 +60,7 @@ predictor = Predictor(model_folder=output)
 
 #####
 
-# predictor = Predictor(model_folder="output")
+# predictor = Predictor(model_id="output")
 
 # value = '''{
 #   "age": "44",
@@ -110,22 +110,22 @@ predictor = Predictor(model_folder=output)
 #   "hours.per.week": "65",
 #   "native.country": "United-States"
 # }'''
-value = '''{
-  "age": "24",
-  "workclass": "Private",
-  "fnlwgt": "359828",
-  "education": "Bachelors",
-  "education.num": "13",
-  "marital.status": "Married-civ-spouse",
-  "occupation": "Prof-specialty",
-  "relationship": "Husband",
-  "race": "White",
-  "sex": "Male",
-  "capital.gain": "0",
-  "capital.loss": "0",
-  "hours.per.week": "44",
-  "native.country": "United-States"
-}'''
+# value = '''{
+#   "age": "24",
+#   "workclass": "Private",
+#   "fnlwgt": "359828",
+#   "education": "Bachelors",
+#   "education.num": "13",
+#   "marital.status": "Married-civ-spouse",
+#   "occupation": "Prof-specialty",
+#   "relationship": "Husband",
+#   "race": "White",
+#   "sex": "Male",
+#   "capital.gain": "0",
+#   "capital.loss": "0",
+#   "hours.per.week": "44",
+#   "native.country": "United-States"
+# }'''
 # value = '''{
 #   "age": "52",
 #   "workclass": "Private",

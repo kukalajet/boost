@@ -7,7 +7,7 @@ from boost.problem import ProblemType
 
 
 class ModelConfig(BaseModel):
-    model_folder: str
+    model_id: str
     train_filename: str
     test_filename: Optional[str] = None
     problem_type: ProblemType

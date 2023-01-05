@@ -21,7 +21,7 @@ class Learner:
     def __init__(
             self,
             problem_type: ProblemType,
-            model_folder: str,
+            model_id: str,
             features: List[str],
             targets: List[str],
             num_folds: int,
@@ -33,7 +33,7 @@ class Learner:
             idx: str,
     ):
         self.problem_type = problem_type
-        self.model_folder = model_folder
+        self.model_id = model_id
         self.features = features
         self.targets = targets
         self.num_folds = num_folds
@@ -56,12 +56,12 @@ class Learner:
 
         scores = []
         for fold in range(self.num_folds):
-            train_fold_path = get_fold_path(self.model_folder, fold, "train")
+            train_fold_path = get_fold_path(self.model_id, fold, "train")
             train_fold = pd.read_feather(train_fold_path)
             x_train = train_fold[self.features]
             y_train = train_fold[self.targets].values
 
-            valid_fold_path = get_fold_path(self.model_folder, fold, "valid")
+            valid_fold_path = get_fold_path(self.model_id, fold, "valid")
             valid_fold = pd.read_feather(valid_fold_path)
             x_valid = valid_fold[self.features]
             y_valid = valid_fold[self.targets].values
@@ -117,7 +117,7 @@ class Learner:
 
         model_class, predict_probabilities, eval_metric, _ = get_model_and_hyperparameters(self.problem_type)
         metrics = Metrics(self.problem_type)
-        target_encoder = _load_persisted_target_encoder(self.model_folder)
+        target_encoder = _load_persisted_target_encoder(self.model_id)
 
         valid_predictions = {}
         test_predictions = []
@@ -125,19 +125,19 @@ class Learner:
         for fold in range(self.num_folds):
             logger.info(f"Training and predicting for fold {fold}")
 
-            train_fold_path = get_fold_path(self.model_folder, fold, "train")
+            train_fold_path = get_fold_path(self.model_id, fold, "train")
             train_fold = pd.read_feather(train_fold_path)
             x_train = train_fold[self.features]
             y_train = train_fold[self.targets].values
 
-            valid_fold_path = get_fold_path(self.model_folder, fold, "valid")
+            valid_fold_path = get_fold_path(self.model_id, fold, "valid")
             valid_fold = pd.read_feather(valid_fold_path)
             x_valid = valid_fold[self.features]
             y_valid = valid_fold[self.targets].values
             valid_ids = valid_fold[self.idx].values
 
             if self.has_tests:
-                test_fold_path = get_fold_path(self.model_folder, fold, "test")
+                test_fold_path = get_fold_path(self.model_id, fold, "test")
                 test_fold = pd.read_feather(test_fold_path)
                 x_test = test_fold[self.features]
                 test_ids = test_fold[self.idx].values
@@ -172,7 +172,7 @@ class Learner:
                 if self.has_tests:
                     test_predictions = np.column_stack(test_predictions)
 
-                persist_object(models, self.model_folder, f"axgb_model.{fold}")
+                persist_object(models, self.model_id, f"axgb_model.{fold}")
 
             else:
                 model.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], verbose=False)
@@ -186,7 +186,7 @@ class Learner:
                     if self.has_tests:
                         test_predictions = model.predict(x_test)
 
-                persist_object(model, self.model_folder, f"axgb_model.{fold}")
+                persist_object(model, self.model_id, f"axgb_model.{fold}")
 
             valid_predictions.update(dict(zip(valid_ids, predictions)))
             if self.has_tests:
@@ -198,11 +198,11 @@ class Learner:
 
         mean_metrics = _mean_dict_values(scores)
         logger.info(f"Metrics: {mean_metrics}")
-        _save_predictions(valid_predictions, self.idx, self.targets, self.model_folder, target_encoder,
+        _save_predictions(valid_predictions, self.idx, self.targets, self.model_id, target_encoder,
                           "oof_predictions.csv")
 
         if self.has_tests:
-            _save_test_predictions(test_predictions, self.idx, self.targets, self.model_folder, target_encoder,
+            _save_test_predictions(test_predictions, self.idx, self.targets, self.model_id, target_encoder,
                                    "oof_predictions.csv", test_ids)
         else:
             logger.info("No test data supplied. Only OOF predictions were generated.")
@@ -212,7 +212,7 @@ class Learner:
         optimize_function = partial(self._optimize, eval_metric=eval_metric, model_class=model_class,
                                     predict_probabilities=predict_probabilities)
 
-        db_path = _get_db_path(self.model_folder)
+        db_path = _get_db_path(self.model_id)
         study = create_study(direction=direction, study_name="testtesttest", storage=f"sqlite:///{db_path}",
                              load_if_exists=True)
 
@@ -335,7 +335,7 @@ def _save_predictions(
         predictions: Dict[int, np.ndarray],
         idx: str,
         targets: List[str],
-        model_folder: str,
+        model_id: str,
         target_encoder: LabelEncoder | OrdinalEncoder,
         filename: str,
 ):
@@ -345,7 +345,7 @@ def _save_predictions(
     else:
         predictions.columns = [idx] + list(target_encoder.classes_)
 
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_folder, filename))
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, filename))
     predictions.to_csv(path, index=False)
 
 
@@ -353,7 +353,7 @@ def _save_test_predictions(
         predictions: np.ndarray,
         idx: str,
         targets: List[str],
-        model_folder: str,
+        model_id: str,
         target_encoder: LabelEncoder | OrdinalEncoder,
         filename: str,
         test_ids: List[int],
@@ -365,5 +365,5 @@ def _save_test_predictions(
         predictions = pd.DataFrame(predictions, columns=list(target_encoder.classes_))
     predictions.insert(loc=0, column=idx, value=test_ids)
 
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_folder, filename))
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, filename))
     predictions.to_csv(path, index=False)

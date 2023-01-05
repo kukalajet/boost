@@ -17,7 +17,7 @@ from boost.utils import reduce_memory_usage
 class DataLoader:
     def __init__(
             self,
-            model_folder: str,
+            model_id: str,
             train_filename: str,
             test_filename: Optional[str],
             task: Optional[str] = None,
@@ -31,7 +31,7 @@ class DataLoader:
             num_trials: Optional[int] = 1000,
             time_limit: Optional[int] = None,
     ):
-        self.model_folder = model_folder
+        self.model_id = model_id
         self.train_filename = train_filename
         self.test_filename = test_filename
         self.task = task
@@ -72,11 +72,11 @@ class DataLoader:
 
         logger.info(f"Model config: {self.model_config}")
         logger.info("Saving model config")
-        persist_object(self.model_config, self.model_folder, "axgb.config")
+        persist_object(self.model_config, self.model_id, "axgb.config")
 
         logger.info("Saving encoders")
-        persist_object(categorical_encoders, self.model_folder, "axgb.categorical_encoders")
-        persist_object(target_encoder, self.model_folder, "axgb.target_encoder")
+        persist_object(categorical_encoders, self.model_id, "axgb.categorical_encoders")
+        persist_object(target_encoder, self.model_id, "axgb.target_encoder")
 
     def _create_folds(self, train_df: pd.DataFrame, problem: ProblemType) -> pd.DataFrame:
         if "kfold" in train_df.columns:
@@ -94,7 +94,7 @@ class DataLoader:
             problem_type: ProblemType
     ) -> ModelConfig:
         model_config = ModelConfig(
-            model_folder=self.model_folder,
+            model_id=self.model_id,
             train_filename=self.train_filename,
             test_filename=self.test_filename,
             problem_type=problem_type,
@@ -177,14 +177,14 @@ class DataLoader:
 
                 categorical_encoders[fold] = ordinal_encoder
 
-            train_fold_path = get_fold_path(self.model_folder, fold, "train")
+            train_fold_path = get_fold_path(self.model_id, fold, "train")
             train_fold.to_feather(train_fold_path)
 
-            valid_fold_path = get_fold_path(self.model_folder, fold, "valid")
+            valid_fold_path = get_fold_path(self.model_id, fold, "valid")
             valid_fold.to_feather(valid_fold_path)
 
             if test_df is not None:
-                test_fold_path = get_fold_path(self.model_folder, fold, "test")
+                test_fold_path = get_fold_path(self.model_id, fold, "test")
                 test_fold.to_feather(test_fold_path)
 
         return categorical_encoders
@@ -195,7 +195,7 @@ class DataLoader:
     def get_learner(self):
         learner = Learner(
             problem_type=self.model_config.problem_type,
-            model_folder=self.model_folder,
+            model_id=self.model_id,
             features=self.features,
             targets=self.targets,
             num_folds=self.num_folds,

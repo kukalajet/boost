@@ -15,13 +15,13 @@ from boost.logger import logger
 
 
 class Predictor:
-    def __init__(self, model_folder: str, idx: str = None):
-        self.model_folder = model_folder
+    def __init__(self, model_id: str, idx: str = None):
+        self.model_id = model_id
 
-        self.model_config = _load_model_config(self.model_folder)
-        self.target_encoder = _load_target_encoder(self.model_folder)
-        self.categorical_encoders = _load_categorical_encoders(self.model_folder)
-        self.models = _load_models(self.model_folder, self.model_config.num_folds)
+        self.model_config = _load_model_config(self.model_id)
+        self.target_encoder = _load_target_encoder(self.model_id)
+        self.categorical_encoders = _load_categorical_encoders(self.model_id)
+        self.models = _load_models(self.model_id, self.model_config.num_folds)
         _, self.predict_probabilities, _, _ = get_model_and_hyperparameters(self.model_config.problem_type)
 
         self.idx = idx
@@ -92,30 +92,30 @@ class Predictor:
         return predictions
 
 
-def _load_model_config(model_folder: str) -> ModelConfig:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_folder, "axgb.config"))
+def _load_model_config(model_id: str) -> ModelConfig:
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, "axgb.config"))
     model_config = load_persisted_object(path)
     return model_config
 
 
-def _load_target_encoder(model_folder: str) -> LabelEncoder | OrdinalEncoder:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_folder, "axgb.target_encoder"))
+def _load_target_encoder(model_id: str) -> LabelEncoder | OrdinalEncoder:
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, "axgb.target_encoder"))
     target_encoder = load_persisted_object(path)
     return target_encoder
 
 
-def _load_categorical_encoders(model_folder: str) -> Dict[int, OrdinalEncoder] | None:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_folder, "axgb.categorical_encoders"))
+def _load_categorical_encoders(model_id: str) -> Dict[int, OrdinalEncoder] | None:
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, "axgb.categorical_encoders"))
     categorical_encoders = load_persisted_object(path)
     return categorical_encoders
 
 
 # How cool would it be if we had an actual type here? :)
 # TODO: debug and find out what type models are.
-def _load_models(model_folder: str, num_folds: int) -> List[Any]:
+def _load_models(model_id: str, num_folds: int) -> List[Any]:
     models = []
     for fold in range(num_folds):
-        path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_folder, f"axgb_model.{fold}"))
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, f"axgb_model.{fold}"))
         model = load_persisted_object(path)
         models.append(model)
 
