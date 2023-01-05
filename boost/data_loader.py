@@ -1,5 +1,4 @@
 import os
-from dataclasses import dataclass
 from typing import Optional, Dict, List
 
 import numpy as np
@@ -14,23 +13,37 @@ from boost.problem import ProblemType, get_problem_type
 from boost.model import ModelConfig
 
 
-@dataclass
 class DataLoader:
-    model_folder: str
-    train_filename: str
-    test_filename: Optional[str]
-    task: Optional[str] = None
-    idx: Optional[str] = "id"
-    targets: Optional[List[str]] = None
-    features: Optional[List[str]] = None
-    categorical_features: Optional[List[str]] = None
-    use_gpu: Optional[bool] = False
-    num_folds: Optional[int] = 5
-    seed: Optional[int] = 42
-    num_trials: Optional[int] = 1000
-    time_limit: Optional[int] = None
+    def __init__(
+            self,
+            model_folder: str,
+            train_filename: str,
+            test_filename: Optional[str],
+            task: Optional[str] = None,
+            idx: Optional[str] = "id",
+            targets: Optional[List[str]] = None,
+            features: Optional[List[str]] = None,
+            categorical_features: Optional[List[str]] = None,
+            use_gpu: Optional[bool] = False,
+            num_folds: Optional[int] = 5,
+            seed: Optional[int] = 42,
+            num_trials: Optional[int] = 1000,
+            time_limit: Optional[int] = None,
+    ):
+        self.model_folder = model_folder
+        self.train_filename = train_filename
+        self.test_filename = test_filename
+        self.task = task
+        self.idx = idx
+        self.targets = targets
+        self.features = features
+        self.categorical_features = categorical_features
+        self.use_gpu = use_gpu
+        self.num_folds = num_folds
+        self.seed = seed
+        self.num_trials = num_trials
+        self.time_limit = time_limit
 
-    def __post_init__(self):
         if self.targets is None:
             logger.warning("No target columns specified. Will default to `target`.")
             self.targets = ["target"]
