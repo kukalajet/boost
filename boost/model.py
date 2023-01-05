@@ -22,11 +22,10 @@ class ModelConfig(BaseModel):
     time_limit: Optional[int] = None
 
 
-def _fetch_model_params(model_config: ModelConfig) -> (
+def get_model_and_hyperparameters(problem_type: ProblemType) -> (
         Type[XGBClassifier | XGBRegressor], bool, Literal["logloss", "mlogloss", "rmse"], str):
-    problem = model_config.problem_type
     direction = "minimize"
-    match problem:
+    match problem_type:
         case ProblemType.binary_classification | ProblemType.multi_label_classification:
             model = XGBClassifier
             predict_probabilities = True

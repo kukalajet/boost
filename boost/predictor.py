@@ -10,7 +10,7 @@ from pydantic import create_model
 from boost.model import ModelConfig
 from boost.problem import ProblemType
 from boost.utils import load_persisted_object
-from boost.model import _fetch_model_params
+from boost.model import get_model_and_hyperparameters
 from boost.logger import logger
 
 
@@ -22,8 +22,7 @@ class Predictor:
         self.target_encoder = _load_target_encoder(self.model_folder)
         self.categorical_encoders = _load_categorical_encoders(self.model_folder)
         self.models = _load_models(self.model_folder, self.model_config.num_folds)
-        # TODO: make `_fetch_model_params` public.
-        _, self.predict_probabilities, _, _ = _fetch_model_params(self.model_config)
+        _, self.predict_probabilities, _, _ = get_model_and_hyperparameters(self.model_config.problem_type)
 
         self.idx = idx
         if self.idx is None:

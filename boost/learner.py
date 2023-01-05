@@ -12,6 +12,7 @@ from functools import partial
 
 from boost.problem import ProblemType
 from boost.metrics import Metrics
+from boost.model import get_model_and_hyperparameters
 from boost.utils import get_fold_path, load_persisted_object, persist_object
 from boost.logger import logger
 
@@ -114,7 +115,7 @@ class Learner:
             params["gpu_id"] = 0
             params["predictor"] = "gpu_predictor"
 
-        model_class, predict_probabilities, eval_metric, _ = _fetch_model_params(self.problem_type)
+        model_class, predict_probabilities, eval_metric, _ = get_model_and_hyperparameters(self.problem_type)
         metrics = Metrics(self.problem_type)
         target_encoder = _load_persisted_target_encoder(self.model_folder)
 
@@ -207,7 +208,7 @@ class Learner:
             logger.info("No test data supplied. Only OOF predictions were generated.")
 
     def _train(self):
-        model_class, predict_probabilities, eval_metric, direction = _fetch_model_params(self.problem_type)
+        model_class, predict_probabilities, eval_metric, direction = get_model_and_hyperparameters(self.problem_type)
         optimize_function = partial(self._optimize, eval_metric=eval_metric, model_class=model_class,
                                     predict_probabilities=predict_probabilities)
 
@@ -245,28 +246,6 @@ class Params:
     booster: Optional[Literal["gbtree", "gblinear"]] = None
     gamma: Optional[float] = None
     grow_policy: Optional[Literal["depthwise", "lossguide"]] = None
-
-
-def _fetch_model_params(problem_type: ProblemType) -> (
-        Type[XGBClassifier | XGBRegressor], bool, Literal["logloss", "mlogloss", "rmse"], str):
-    direction = "minimize"
-    match problem_type:
-        case ProblemType.binary_classification | ProblemType.multi_label_classification:
-            model = XGBClassifier
-            predict_probabilities = True
-            eval_metric = "logloss"
-        case ProblemType.multi_class_classification:
-            model = XGBClassifier
-            predict_probabilities = True
-            eval_metric = "mlogloss"
-        case ProblemType.single_column_regression | ProblemType.multi_column_regression:
-            model = XGBRegressor
-            predict_probabilities = False
-            eval_metric = "rmse"
-        case _:
-            raise NotImplementedError
-
-    return model, predict_probabilities, eval_metric, direction
 
 
 def _get_params(trial: Trial, use_gpu: bool) -> Params:
