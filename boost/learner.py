@@ -323,7 +323,6 @@ def _get_model_instance_with_params(
         subsample=params.subsample,
         colsample_bytree=params.colsample_bytree,
         max_depth=params.max_depth,
-        early_stopping_rounds=params.early_stopping_rounds,
         n_estimators=params.n_estimators,
         tree_method=params.tree_method,
         gpu_id=params.gpu_id,
