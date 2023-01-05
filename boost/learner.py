@@ -76,7 +76,6 @@ class Learner:
                     current_model.fit(
                         x_train,
                         y_train[:, index],
-                        early_stopping_rounds=params.early_stopping_rounds,
                         eval_set=[(x_valid, y_valid[:, index])],
                         verbose=False,
                     )
@@ -92,7 +91,6 @@ class Learner:
                 model.fit(
                     x_train,
                     y_train,
-                    early_stopping_rounds=params.early_stopping_rounds,
                     eval_set=[(x_valid, y_valid)],
                     verbose=False
                 )
@@ -115,9 +113,6 @@ class Learner:
             params["tree_method"] = "gpu_hist"
             params["gpu_id"] = 0
             params["predictor"] = "gpu_predictor"
-
-        early_stopping_rounds = params["early_stopping_rounds"]
-        del params["early_stopping_rounds"]
 
         model_class, predict_probabilities, eval_metric, _ = _fetch_model_params(self.problem_type)
         metrics = Metrics(self.problem_type)
@@ -156,8 +151,7 @@ class Learner:
 
                 for index in range(len(self.targets)):
                     cloned_model = copy.deepcopy(model)
-                    cloned_model.fit(x_train, y_train[:, index], early_stopping_rounds=early_stopping_rounds,
-                                     eval_set=[(x_valid, y_valid[:, index])], verbose=False)
+                    cloned_model.fit(x_train, y_train[:, index], eval_set=[(x_valid, y_valid[:, index])], verbose=False)
                     models.append(cloned_model)
 
                     if self.problem_type == ProblemType.multi_column_regression:
@@ -180,8 +174,7 @@ class Learner:
                 persist_object(models, self.model_folder, f"axgb_model.{fold}")
 
             else:
-                model.fit(x_train, y_train, early_stopping_rounds=early_stopping_rounds,
-                          eval_set=[(x_valid, y_valid)], verbose=False)
+                model.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], verbose=False)
 
                 if predict_probabilities:
                     predictions = model.predict_proba(x_valid)
@@ -323,6 +316,7 @@ def _get_model_instance_with_params(
         subsample=params.subsample,
         colsample_bytree=params.colsample_bytree,
         max_depth=params.max_depth,
+        early_stopping_rounds=params.early_stopping_rounds,
         n_estimators=params.n_estimators,
         tree_method=params.tree_method,
         gpu_id=params.gpu_id,
