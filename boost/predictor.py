@@ -51,11 +51,11 @@ class Predictor:
             if len(categorical_features) > 0:
                 categorical_encoder = self.categorical_encoders[fold]
                 fold_test[categorical_features] = categorical_encoder.transform(fold_test[categorical_features].values)
-            test_features = fold_test[self.model_config.features]
+            test_features = fold_test[self.model_config.features].copy()
 
             for column in test_features.columns:
                 if test_features[column].dtype == "object":
-                    test_features[column] = test_features[column].astype(np.int64)
+                    test_features.loc[:, column] = test_features[column].astype(np.int64)
 
             if self.model_config.problem_type in (
                     ProblemType.multi_column_regression, ProblemType.multi_label_classification):
