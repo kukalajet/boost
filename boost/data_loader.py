@@ -11,6 +11,7 @@ from boost.logger import logger
 from boost.utils import get_fold_path, persist_object
 from boost.problem import ProblemType, get_problem_type
 from boost.model import ModelConfig
+from boost.utils import reduce_memory_usage
 
 
 class DataLoader:
@@ -215,7 +216,7 @@ def _get_processed_df_from_csv(filename: Optional[str], idx: Optional[str]) -> p
 
     path_to_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_samples', filename))
     df = pd.read_csv(path_to_csv)
-    # TODO: use `reduce_memory_usage` here
+    df = reduce_memory_usage(df)
     df = _inject_idx(df, idx)
 
     return df
