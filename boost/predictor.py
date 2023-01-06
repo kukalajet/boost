@@ -1,6 +1,5 @@
-import os
 import json
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 import pandas as pd
@@ -9,19 +8,19 @@ from pydantic import create_model
 
 from boost.model import ModelConfig
 from boost.problem import ProblemType
-from boost.utils import load_persisted_object
 from boost.model import get_model_and_hyperparameters
 from boost.logger import logger
+import boost.fs as fs
 
 
 class Predictor:
     def __init__(self, model_id: str, idx: str = None):
         self.model_id = model_id
 
-        self.model_config = _load_model_config(self.model_id)
-        self.target_encoder = _load_target_encoder(self.model_id)
-        self.categorical_encoders = _load_categorical_encoders(self.model_id)
-        self.models = _load_models(self.model_id, self.model_config.num_folds)
+        self.model_config = _load_model_config(self.model_id, None)
+        self.target_encoder = _load_target_encoder(self.model_id, None)
+        self.categorical_encoders = _load_categorical_encoders(self.model_id, None)
+        self.models = _load_models(self.model_id, self.model_config.num_folds, None)
         _, self.predict_probabilities, _, _ = get_model_and_hyperparameters(self.model_config.problem_type)
 
         self.idx = idx
@@ -92,31 +91,34 @@ class Predictor:
         return predictions
 
 
-def _load_model_config(model_id: str) -> ModelConfig:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, "axgb.config"))
-    model_config = load_persisted_object(path)
+def _load_model_config(model_id: str, model_version: Optional[fs.ModelVersion]) -> ModelConfig:
+    filename = f"{model_id}.config"
+    model_config = fs.load_object(model_id, model_version, filename)
     return model_config
 
 
-def _load_target_encoder(model_id: str) -> LabelEncoder | OrdinalEncoder:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, "axgb.target_encoder"))
-    target_encoder = load_persisted_object(path)
+def _load_target_encoder(model_id: str, model_version: Optional[fs.ModelVersion]) -> LabelEncoder | OrdinalEncoder:
+    filename = f"{model_id}.target_encoder"
+    target_encoder = fs.load_object(model_id, model_version, filename)
     return target_encoder
 
 
-def _load_categorical_encoders(model_id: str) -> Dict[int, OrdinalEncoder] | None:
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, "axgb.categorical_encoders"))
-    categorical_encoders = load_persisted_object(path)
+def _load_categorical_encoders(
+        model_id: str,
+        model_version: Optional[fs.ModelVersion]
+) -> Dict[int, OrdinalEncoder] | None:
+    filename = f"{model_id}.categorical_encoders"
+    categorical_encoders = fs.load_object(model_id, model_version, filename)
     return categorical_encoders
 
 
 # How cool would it be if we had an actual type here? :)
 # TODO: debug and find out what type models are.
-def _load_models(model_id: str, num_folds: int) -> List[Any]:
+def _load_models(model_id: str, num_folds: int, model_version: Optional[fs.ModelVersion]) -> List[Any]:
     models = []
     for fold in range(num_folds):
-        path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', model_id, f"axgb_model.{fold}"))
-        model = load_persisted_object(path)
+        filename = f"{model_id}-model.{fold}"
+        model = fs.load_object(model_id, model_version, filename)
         models.append(model)
 
     return models

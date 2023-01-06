@@ -3,7 +3,7 @@ from boost.predictor import Predictor
 
 # from boost.booster import Booster
 
-train_filename = "binary_classification.csv"
+train_filename = "train.csv"
 model_id = "binary_classification"
 test_filename = None
 task = None
@@ -18,24 +18,24 @@ num_trials = 100
 time_limit = 360
 # fast = False
 #
-# data_loader = DataLoader(
-#     model_id=model_id,
-#     train_filename=train_filename,
-#     test_filename=test_filename,
-#     task=task,
-#     idx=idx,
-#     targets=targets,
-#     features=features,
-#     categorical_features=categorical_features,
-#     use_gpu=use_gpu,
-#     num_folds=num_folds,
-#     seed=seed,
-#     num_trials=num_trials,
-#     time_limit=time_limit,
-# )
-# data_loader.prepare()
-# learner = data_loader.get_learner()
-# learner.train()
+data_loader = DataLoader(
+    model_id=model_id,
+    train_filename=train_filename,
+    test_filename=test_filename,
+    task=task,
+    idx=idx,
+    targets=targets,
+    features=features,
+    categorical_features=categorical_features,
+    use_gpu=use_gpu,
+    num_folds=num_folds,
+    seed=seed,
+    num_trials=num_trials,
+    time_limit=time_limit,
+)
+data_loader.prepare()
+learner = data_loader.get_learner()
+learner.train()
 #
 predictor = Predictor(model_id=model_id)
 

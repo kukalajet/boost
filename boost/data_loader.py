@@ -1,5 +1,4 @@
-import os
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 import numpy as np
 import pandas as pd
@@ -8,10 +7,10 @@ from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 
 from boost.learner import Learner
 from boost.logger import logger
-from boost.utils import get_fold_path, persist_object
 from boost.problem import ProblemType, get_problem_type
 from boost.model import ModelConfig
 from boost.utils import reduce_memory_usage
+import boost.fs as fs
 
 
 class DataLoader:
@@ -53,8 +52,8 @@ class DataLoader:
             self.idx = "id"
 
     def _process_data(self):
-        train_df = _get_processed_df_from_csv(self.train_filename, self.idx)
-        test_df = _get_processed_df_from_csv(self.test_filename, self.idx)
+        train_df = _get_processed_df_from_csv(self.model_id, "train", self.idx)
+        test_df = _get_processed_df_from_csv(self.model_id, "test", self.idx)
 
         problem_type = get_problem_type(self.targets, train_df, self.task)
         train_df = self._create_folds(train_df, problem_type)
@@ -70,13 +69,9 @@ class DataLoader:
         categorical_encoders = self._get_categorical_encoders(train_df, test_df, categorical_features)
         self.model_config = self._get_model_config(self.features, categorical_features, problem_type)
 
-        logger.info(f"Model config: {self.model_config}")
-        logger.info("Saving model config")
-        persist_object(self.model_config, self.model_id, "axgb.config")
-
-        logger.info("Saving encoders")
-        persist_object(categorical_encoders, self.model_id, "axgb.categorical_encoders")
-        persist_object(target_encoder, self.model_id, "axgb.target_encoder")
+        _save_model_config(self.model_config, self.model_id, None)
+        _save_categorical_encoders(categorical_encoders, self.model_id, None)
+        _save_target_encoder(target_encoder, self.model_id, None)
 
     def _create_folds(self, train_df: pd.DataFrame, problem: ProblemType) -> pd.DataFrame:
         if "kfold" in train_df.columns:
@@ -177,14 +172,14 @@ class DataLoader:
 
                 categorical_encoders[fold] = ordinal_encoder
 
-            train_fold_path = get_fold_path(self.model_id, fold, "train")
+            train_fold_path = fs.get_model_fold_path(self.model_id, None, "train", fold)
             train_fold.to_feather(train_fold_path)
 
-            valid_fold_path = get_fold_path(self.model_id, fold, "valid")
+            valid_fold_path = fs.get_model_fold_path(self.model_id, None, "valid", fold)
             valid_fold.to_feather(valid_fold_path)
 
             if test_df is not None:
-                test_fold_path = get_fold_path(self.model_id, fold, "test")
+                test_fold_path = fs.get_model_fold_path(self.model_id, None, "test", fold)
                 test_fold.to_feather(test_fold_path)
 
         return categorical_encoders
@@ -210,12 +205,16 @@ class DataLoader:
         return learner
 
 
-def _get_processed_df_from_csv(filename: Optional[str], idx: Optional[str]) -> pd.DataFrame | None:
-    if filename is None:
+def _get_processed_df_from_csv(
+        model_id: str,
+        dataset_type: fs.DatasetType,
+        idx: Optional[str],
+) -> pd.DataFrame | None:
+    dataset_path = fs.get_dataset_path(model_id, dataset_type)
+    if not dataset_path.is_file():
         return None
 
-    path_to_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data_samples', filename))
-    df = pd.read_csv(path_to_csv)
+    df = pd.read_csv(dataset_path)
     df = reduce_memory_usage(df)
     df = _inject_idx(df, idx)
 
@@ -269,3 +268,21 @@ def _create_folds(
         raise Exception("Problem type not supported")
 
     return df
+
+
+def _save_model_config(model: Any, model_id: str, model_version: Optional[fs.DatasetVersion]):
+    filename = f"{model_id}.config"
+    logger.info(f"Saving model config: {filename}")
+    fs.save_object(model, model_id, filename, model_version)
+
+
+def _save_categorical_encoders(model: Any, model_id: str, model_version: Optional[fs.DatasetVersion]):
+    filename = f"{model_id}.categorical_encoders"
+    logger.info(f"Saving categorical encoders: {filename}")
+    fs.save_object(model, model_id, filename, model_version)
+
+
+def _save_target_encoder(model: Any, model_id: str, model_version: Optional[fs.DatasetVersion]):
+    filename = f"{model_id}.target_encoder"
+    logger.info(f"Saving target encoder: {filename}")
+    fs.save_object(model, model_id, filename, model_version)
