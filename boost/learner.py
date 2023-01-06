@@ -104,7 +104,7 @@ class Learner:
             scores.append(score)
 
         mean_metrics = _mean_dict_values(scores)
-        print(f"Metrics: {mean_metrics}")
+        _log_metrics(mean_metrics)
 
         return mean_metrics[eval_metric]
 
@@ -196,7 +196,7 @@ class Learner:
             logger.info(f"Fold {fold} done!")
 
         mean_metrics = _mean_dict_values(scores)
-        logger.info(f"Metrics: {mean_metrics}")
+        _log_metrics(mean_metrics)
         _save_predictions(valid_predictions, self.idx, self.targets, self.model_id, target_encoder)
 
         if self.has_tests:
@@ -225,6 +225,18 @@ class Learner:
         logger.info("Creating OOF and test predictions")
         self._predict(params)
         logger.info("Creating OOF and test predictions complete")
+
+
+def _log_metrics(metrics: Dict[str, float]):
+    auc = metrics['auc']
+    logloss = metrics['logloss']
+    f1 = metrics['f1']
+    accuracy = metrics['accuracy']
+    precision = metrics['precision']
+    recall = metrics['recall']
+
+    logger.info(
+        f"auc: {auc} | logloss: {logloss} | f1: {f1} | accuracy: {accuracy} | precision: {precision} | recall: {recall}")
 
 
 @dataclass(order=False)
