@@ -50,6 +50,7 @@ class DataLoader:
     def _process_data(self):
         train_df = _get_processed_df_from_csv(self.model_id, "train", self.idx)
         test_df = _get_processed_df_from_csv(self.model_id, "test", self.idx)
+        self.has_tests = True if test_df is not None else False
 
         problem_type = get_problem_type(self.targets, train_df, self.task)
         train_df = self._create_folds(train_df, problem_type)
@@ -189,7 +190,7 @@ class DataLoader:
             targets=self.targets,
             num_folds=self.num_folds,
             num_trials=self.num_trials,
-            has_tests=self.test_filename is not None,
+            has_tests=self.has_tests,
             time_limit=self.time_limit,
             use_gpu=self.use_gpu,
             seed=self.seed,
