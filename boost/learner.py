@@ -210,7 +210,7 @@ class Learner:
                                     predict_probabilities=predict_probabilities)
 
         database_path = fs.get_optuna_database_path()
-        study = create_study(direction=direction, study_name="testtesttest", storage=f"sqlite:///{database_path}",
+        study = create_study(direction=direction, study_name=self.model_id, storage=f"sqlite:///{database_path}",
                              load_if_exists=True)
 
         study.optimize(optimize_function, n_trials=self.num_trials, timeout=self.time_limit)
@@ -228,15 +228,11 @@ class Learner:
 
 
 def _log_metrics(metrics: Dict[str, float]):
-    auc = metrics['auc']
-    logloss = metrics['logloss']
-    f1 = metrics['f1']
-    accuracy = metrics['accuracy']
-    precision = metrics['precision']
-    recall = metrics['recall']
-
-    logger.info(
-        f"auc: {auc} | logloss: {logloss} | f1: {f1} | accuracy: {accuracy} | precision: {precision} | recall: {recall}")
+    values = []
+    for key, value in metrics.items():
+        values.append(f"{key}: {value}")
+    log = " | ".join(values)
+    logger.info(log)
 
 
 @dataclass(order=False)
