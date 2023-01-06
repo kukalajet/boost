@@ -17,8 +17,6 @@ class DataLoader:
     def __init__(
             self,
             model_id: str,
-            train_filename: str,
-            test_filename: Optional[str],
             task: Optional[str] = None,
             idx: Optional[str] = "id",
             targets: Optional[List[str]] = None,
@@ -31,8 +29,6 @@ class DataLoader:
             time_limit: Optional[int] = None,
     ):
         self.model_id = model_id
-        self.train_filename = train_filename
-        self.test_filename = test_filename
         self.task = task
         self.idx = idx
         self.targets = targets
@@ -90,8 +86,6 @@ class DataLoader:
     ) -> ModelConfig:
         model_config = ModelConfig(
             model_id=self.model_id,
-            train_filename=self.train_filename,
-            test_filename=self.test_filename,
             problem_type=problem_type,
             idx=self.idx,
             targets=self.targets,
