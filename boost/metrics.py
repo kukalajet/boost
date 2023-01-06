@@ -37,7 +37,7 @@ class Metrics:
                 values.append(('rmse', partial(skmetrics.mean_squared_error, squared=False)))
                 values.append(('rmsle', partial(skmetrics.mean_squared_log_error, squared=False)))
             case ProblemType.multi_label_classification:
-                values.append(('r2', skmetrics.log_loss))
+                values.append(('logloss', skmetrics.log_loss))
             case _:
                 raise Exception("Invalid problem type")
 
